@@ -1,0 +1,100 @@
+module Trigger where
+
+import Cats
+import DA.Foldable (forA_)
+import DA.Functor (void)
+import DA.Map qualified as Map
+import Daml.Trigger 
+
+trigger: Trigger Text
+trigger = Trigger
+  { initialize = debugRaw "Starting trigger" >> pure mempty
+  , updateState = \_ -> pure ()
+  , rule = const feedTheCats
+  , registeredTemplates = RegisteredTemplates [
+      registeredTemplate @Cat, registeredTemplate @Food
+    ]
+  , heartbeat = None
+  }
+
+-- This one can reproduce the issue.
+feedTheCats : TriggerA Text ()
+feedTheCats = do
+  cats <- query @Cat
+  debugRaw
+      $  "Feeding "
+      <> show (length cats)
+      <> " cats"
+  forA_ cats \(catCid, Cat{..}) -> do
+    debug $ "Processing cat with isin " <> isin
+    queryContractKey @Food (owner, isin) >>= \case
+      Some (foodCid, _) -> do
+        debugRaw $ "Found food for cat with isin " <> isin
+        dedupExercise catCid (Cat_Feed foodCid)
+      None -> do
+        debugRaw $ "Not found food for cat with isin " <> isin
+
+-- This one seems to work fine. One the other hand, it can overload the ledger.
+feedTheCats_emitCommands : TriggerA Text ()
+feedTheCats_emitCommands = do
+  cats <- query @Cat
+  debugRaw
+      $  "Feeding "
+      <> show (length cats)
+      <> " cats"
+  forA_ cats \(catCid, Cat{..}) -> do
+    debug $ "Processing cat with isin " <> isin
+    queryContractKey @Food (owner, isin) >>= \case
+      Some (foodCid, _) -> do
+        debugRaw $ "Found food for cat with isin " <> isin
+        void $ emitCommands [exerciseCmd catCid (Cat_Feed foodCid)] [toAnyContractId catCid]
+      None -> do
+        debugRaw $ "Not found food for cat with isin " <> isin
+
+maxCommandsInFlight : Int
+maxCommandsInFlight = 50
+
+tooManyCommandsInFlight : TriggerA Text Bool
+tooManyCommandsInFlight = (>= maxCommandsInFlight) . Map.size <$> getCommandsInFlight
+
+emitCommands' : [Command] -> [AnyContractId] -> TriggerA Text ()
+emitCommands' cmds pending =
+  tooManyCommandsInFlight >>= \case
+    False -> void $ emitCommands cmds pending
+    True ->  debugRaw "Not emitting commands at the moment, reached limit"
+
+-- This one can reproduce the issue.
+feedTheCats_emitCommands_throttled : TriggerA Text ()
+feedTheCats_emitCommands_throttled = do
+  cats <- query @Cat
+  debugRaw
+      $  "Feeding "
+      <> show (length cats)
+      <> " cats"
+  forA_ cats \(catCid, Cat{..}) -> do
+    debug $ "Processing cat with isin " <> isin
+    queryContractKey @Food (owner, isin) >>= \case
+      Some (foodCid, _) -> do
+        debugRaw $ "Found food for cat with isin " <> isin
+        void $ emitCommands' [exerciseCmd catCid (Cat_Feed foodCid)] [toAnyContractId catCid]
+      None -> do
+        debugRaw $ "Not found food for cat with isin " <> isin
+
+-- This one seems to work fine.
+feedTheCats_emitCommands_single : TriggerA Text ()
+feedTheCats_emitCommands_single = do
+  cats <- query @Cat
+  debugRaw
+      $  "Feeding "
+      <> show (length cats)
+      <> " cats"
+  case cats of
+    [] -> debugRaw "Nothing to do"
+    (catCid, Cat{..}) :: _ -> do
+      debug $ "Processing cat with isin " <> isin
+      queryContractKey @Food (owner, isin) >>= \case
+        Some (foodCid, _) -> do
+          debugRaw $ "Found food for cat with isin " <> isin
+          void $ emitCommands' [exerciseCmd catCid (Cat_Feed foodCid)] [toAnyContractId catCid]
+        None -> do
+          debugRaw $ "Not found food for cat with isin " <> isin

@@ -1,0 +1,33 @@
+module Cats where
+
+template Cat
+  with
+    owner : Party
+    isin : Text
+  where
+    signatory owner
+    key (owner, isin) : (Party, Text)
+    maintainer key._1
+
+    choice Cat_Feed : ()
+      with
+         foodCid : ContractId Food
+      controller owner
+      do
+        exercise foodCid Food_FeedCat
+
+template Food
+  with
+    owner : Party
+    isin : Text
+  where
+    signatory owner
+    key (owner, isin) : (Party, Text)
+    maintainer key._1
+
+    nonconsuming choice Food_FeedCat : ()
+      controller owner
+      do
+        pure ()
+
+

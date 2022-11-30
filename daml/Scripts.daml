@@ -1,0 +1,44 @@
+module Scripts where
+
+import Cats
+import DA.Foldable (forA_)
+import Daml.Script
+
+
+allocate : Script Party
+allocate = allocateParty "alice"
+
+isins = [401..800]
+
+createFoodContracts : Party -> Script ()
+createFoodContracts owner = do
+  debugRaw "Creating cats"
+
+  forA_ isins \n ->
+    submit owner $
+      createCmd Cat with
+        isin = show n
+        ..
+
+  debugRaw "Created cats"
+
+  forA_ isins \n ->
+    submit owner $
+      createCmd Food with
+        isin = show n
+        ..
+
+  debugRaw "Created Food contracts"
+
+archiveFoodContracts : Party -> Script ()
+archiveFoodContracts owner = do
+  time <- getTime
+
+  debugRaw $ "[" <> show time <> "] Archiving Foods"
+
+  forA_ isins \n ->
+    submit owner do
+      exerciseByKeyCmd @Food (owner, show n) Archive
+  time <- getTime
+
+  debugRaw $ "[" <> show time <> "] Archiving Foods done"
